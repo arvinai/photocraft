@@ -19,7 +19,9 @@ $branch = & git branch --show-current
 if ($LASTEXITCODE -ne 0 -or $branch.Trim() -ne 'fix/windows-pen-barrel-v070') {
     throw 'Publish from fix/windows-pen-barrel-v070 only.'
 }
-Run-Step -Program gh -StepArguments @('repo', 'fork', 'storytold/photocraft', '--clone=false', '--remote=false')
+# With an explicit repository argument, gh supports --clone=false but rejects
+# --remote. Configure the remotes below after verifying the fork's parent.
+Run-Step -Program gh -StepArguments @('repo', 'fork', 'storytold/photocraft', '--clone=false')
 $forkName = $GitHubOwner + '/photocraft'
 $forkParent = & gh api ('repos/' + $forkName) --jq .parent.full_name
 if ($LASTEXITCODE -ne 0 -or $forkParent.Trim() -ne 'storytold/photocraft') {
