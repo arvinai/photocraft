@@ -272,6 +272,21 @@ mod tests {
     }
 
     #[test]
+    fn held_barrel_opens_picker_at_canvas_edge_without_painting() {
+        let mut h = harness(None);
+        let p = h.state().last_canvas_rect.right_bottom() - vec2(10.0, 10.0);
+        h.event(egui::Event::PointerMoved(p));
+        h.run_steps(1);
+        press(&mut h, p, PointerButton::Secondary, true);
+        assert!(h.state().ui.brush_picker.is_some());
+        h.event(egui::Event::PointerMoved(p + vec2(-40.0, -20.0)));
+        h.run_steps(2);
+        assert!(h.state().ui.brush_picker.is_some(), "a clamped picker survives its opening press");
+        press(&mut h, p + vec2(-40.0, -20.0), PointerButton::Secondary, false);
+        assert!(strokes(&h).is_empty());
+    }
+
+    #[test]
     fn alt_barrel_press_leaves_brush_resize_priority() {
         let mut h = harness(None);
         let p = h.state().last_canvas_rect.center();

@@ -2,7 +2,7 @@
 
 mod pen_buttons;
 mod runner;
-use pen_buttons::{PenButtons, TipPhase, Transitions};
+use pen_buttons::{pointer_position, DeviceMapping, PenButtons, TipPhase, Transitions};
 
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -37,8 +37,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows_sys::Win32::UI::Input::Pointer::{
-    POINTER_FLAG_CANCELED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_UP,
-    POINTER_FLAG_UPDATE,
+    POINTER_FLAG_CANCELED, POINTER_FLAG_DOWN, POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE,
+    POINTER_FLAG_SECONDBUTTON, POINTER_FLAG_UP, POINTER_FLAG_UPDATE,
 };
 use windows_sys::Win32::UI::Input::Touch::{
     CloseTouchInputHandle, GetTouchInputInfo, TOUCHEVENTF_DOWN, TOUCHEVENTF_MOVE, TOUCHEVENTF_UP,
@@ -1063,10 +1063,15 @@ fn emit_pen_events(
         });
         touch(TouchPhase::Cancelled);
     }
-    userdata.send_event(Event::WindowEvent {
-        window_id: RootWindowId(WindowId(window)),
-        event: WindowEvent::CursorMoved { device_id: DEVICE_ID, position: location },
-    });
+    let cursor = || {
+        userdata.send_event(Event::WindowEvent {
+            window_id: RootWindowId(WindowId(window)),
+            event: WindowEvent::CursorMoved { device_id: DEVICE_ID, position: location },
+        })
+    };
+    if events.cursor_before() {
+        cursor();
+    }
     if let Some(pressed) = events.secondary {
         userdata.send_event(Event::WindowEvent {
             window_id: RootWindowId(WindowId(window)),
@@ -1086,6 +1091,9 @@ fn emit_pen_events(
         Some(TipPhase::Moved) => touch(TouchPhase::Moved),
         Some(TipPhase::Ended) => touch(TouchPhase::Ended),
         Some(TipPhase::Cancelled) | None => {}
+    }
+    if events.cursor_after() {
+        cursor();
     }
 }
 
@@ -2063,6 +2071,12 @@ unsafe fn public_window_callback_inner(
             let pointer_id = super::loword(wparam as u32) as u32;
             if userdata.pen_position.get().is_some_and(|(id, _)| id == pointer_id) {
                 reset_pen(window, userdata);
+                if msg == WM_POINTERLEAVE {
+                    userdata.send_event(Event::WindowEvent {
+                        window_id: RootWindowId(WindowId(window)),
+                        event: WindowEvent::CursorLeft { device_id: DEVICE_ID },
+                    });
+                }
             }
             result = ProcResult::Value(0);
         }
@@ -2116,35 +2130,47 @@ unsafe fn public_window_callback_inner(
                     let mut device_rect = mem::MaybeUninit::uninit();
                     let mut display_rect = mem::MaybeUninit::uninit();
 
-                    if unsafe {
+                    let rects_available = unsafe {
                         GetPointerDeviceRects(
                             pointer_info.sourceDevice,
                             device_rect.as_mut_ptr(),
                             display_rect.as_mut_ptr(),
                         )
-                    } == false.into()
-                    {
+                    } != false.into();
+                    if !rects_available && pointer_info.pointerType != PT_PEN {
                         continue;
                     }
-
-                    let device_rect = unsafe { device_rect.assume_init() };
-                    let display_rect = unsafe { display_rect.assume_init() };
-
-                    // For the most precise himetric to pixel conversion we calculate the ratio
-                    // between the resolution of the display device (pixel) and
-                    // the touch device (himetric).
-                    let himetric_to_pixel_ratio_x = (display_rect.right - display_rect.left) as f64
-                        / (device_rect.right - device_rect.left) as f64;
-                    let himetric_to_pixel_ratio_y = (display_rect.bottom - display_rect.top) as f64
-                        / (device_rect.bottom - device_rect.top) as f64;
-
-                    // ptHimetricLocation's origin is 0,0 even on multi-monitor setups.
-                    // On multi-monitor setups we need to translate the himetric location to the
-                    // rect of the display device it's attached to.
-                    let x = display_rect.left as f64
-                        + pointer_info.ptHimetricLocation.x as f64 * himetric_to_pixel_ratio_x;
-                    let y = display_rect.top as f64
-                        + pointer_info.ptHimetricLocation.y as f64 * himetric_to_pixel_ratio_y;
+                    // PR #2475: a missing/invalid device rectangle must not discard
+                    // pen buttons. Retain subpixel precision when mapping is available.
+                    let mapping = if rects_available {
+                        let device_rect = unsafe { device_rect.assume_init() };
+                        let display_rect = unsafe { display_rect.assume_init() };
+                        Some(DeviceMapping {
+                            device_width: f64::from(device_rect.right)
+                                - f64::from(device_rect.left),
+                            device_height: f64::from(device_rect.bottom)
+                                - f64::from(device_rect.top),
+                            display_left: f64::from(display_rect.left),
+                            display_top: f64::from(display_rect.top),
+                            display_width: f64::from(display_rect.right)
+                                - f64::from(display_rect.left),
+                            display_height: f64::from(display_rect.bottom)
+                                - f64::from(display_rect.top),
+                        })
+                    } else {
+                        None
+                    };
+                    let (x, y) = pointer_position(
+                        mapping,
+                        (
+                            f64::from(pointer_info.ptHimetricLocation.x),
+                            f64::from(pointer_info.ptHimetricLocation.y),
+                        ),
+                        (
+                            f64::from(pointer_info.ptPixelLocation.x),
+                            f64::from(pointer_info.ptPixelLocation.y),
+                        ),
+                    );
 
                     let mut location = POINT { x: x.floor() as i32, y: y.floor() as i32 };
 
@@ -2152,7 +2178,11 @@ unsafe fn public_window_callback_inner(
                         continue;
                     }
 
-                    let mut barrel = None;
+                    // Some drivers report only the generic secondary-button flag,
+                    // including when GetPointerPenInfo cannot provide pen-specific flags.
+                    let secondary =
+                        util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_SECONDBUTTON);
+                    let mut barrel = (pointer_info.pointerType == PT_PEN).then_some(secondary);
                     let force = match pointer_info.pointerType {
                         PT_TOUCH => {
                             let mut touch_info = mem::MaybeUninit::uninit();
@@ -2179,10 +2209,13 @@ unsafe fn public_window_callback_inner(
                                     0 => None,
                                     _ => {
                                         let pen_info = unsafe { pen_info.assume_init() };
-                                        barrel = Some(util::has_flag(
-                                            pen_info.penFlags,
-                                            PEN_FLAG_BARREL,
-                                        ));
+                                        barrel = Some(
+                                            secondary
+                                                || util::has_flag(
+                                                    pen_info.penFlags,
+                                                    PEN_FLAG_BARREL,
+                                                ),
+                                        );
                                         normalize_pointer_pressure(pen_info.pressure)
                                     }
                                 }
@@ -2201,13 +2234,22 @@ unsafe fn public_window_callback_inner(
                         }
                         userdata.pen_position.set(Some((id, location)));
                         let mut buttons = userdata.pen_buttons.get();
+                        let cancelled =
+                            util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_CANCELED)
+                                || !util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_INRANGE);
                         let events = buttons.update(
                             util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_INCONTACT),
                             barrel,
-                            util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_CANCELED),
+                            cancelled,
                         );
                         userdata.pen_buttons.set(buttons);
                         emit_pen_events(window, userdata, id, location, force, events);
+                        if cancelled {
+                            userdata.send_event(Event::WindowEvent {
+                                window_id: RootWindowId(WindowId(window)),
+                                event: WindowEvent::CursorLeft { device_id: DEVICE_ID },
+                            });
+                        }
                         continue;
                     }
                     userdata.send_event(Event::WindowEvent {

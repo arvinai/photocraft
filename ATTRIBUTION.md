@@ -104,3 +104,4 @@ Files copied into `corpus/` by hand (tiff, exr, raw) must be MIT, BSD or CC0.
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
 | `vendor/winit` | winit 0.30.13, Windows pen barrel mapping patch | winit contributors; local patch | https://crates.io/crates/winit/0.30.13 | Apache-2.0 (`vendor/winit/LICENSE`) |
+| `vendor/winit/src/platform_impl/windows/event_loop.rs` compatibility follow-up | Windows Ink hover and coordinate fallback approach | Kindleshard / PhotoCraft contributors | [PR #2475](https://github.com/storytold/photocraft/pull/2475), commit `ed3618835970ab224bf5fa0c7264fe1a57202a31` | MIT OR Apache-2.0 (PhotoCraft root licences); winit Apache-2.0 retained |

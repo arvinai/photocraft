@@ -15,6 +15,15 @@ The application opens the brush picker on secondary press so a held/moving
 barrel gesture is usable. Erase preference, Alt resize and layer picking retain
 priority. No shape, gradient, mirror or project-format customizations included.
 
+Compatibility follow-up adapted selectively from Kindleshard/photocraft,
+PR https://github.com/storytold/photocraft/pull/2475 at
+ed3618835970ab224bf5fa0c7264fe1a57202a31 (PhotoCraft MIT OR Apache-2.0):
+restore hover after Touch End, avoid duplicate tip motion events, retain pixel
+coordinates when device rectangles are missing/invalid, and accept the generic
+secondary-button flag. Out-of-range/leave input clears hover. The original local
+cancel/capture-loss handling and suppression until lift remain in use; the PR's
+entire input state machine and older UI code were not imported.
+
 Tests: rustc --test scripts/pen-button-mapping-tests.rs; actual egui pointer-event
 tests in brush_picker_press.rs; application paint_mouse regressions.
 The complete UI library passed 1796 tests (10 ignored) and the release build completed on 2026-10-12. The user reported the installed repair appears to work on their Wacom; other tablets still need hardware testing.

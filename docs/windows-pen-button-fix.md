@@ -46,6 +46,21 @@ against the executable being tested.
 
 ## Upstream contribution status
 
+PR #2475 compatibility changes have been selectively ported to this v0.7.0
+reference: hover restoration after lift, pixel-coordinate fallback when device
+rectangles are unavailable, generic secondary-button flag support, and a picker
+regression at the canvas edge. Local tip suppression until lift and balanced
+cancel/capture-loss handling are retained. This does not merge the PR's entire
+branch or change the official base version. Three new pure input tests accompany
+the compatibility port; the UI regression verifies the clamped picker stays open
+without recording a paint stroke.
+
+Compatibility-port validation on Windows: 9 pure input tests, 1797 UI library
+tests (10 ignored), and 92 application tests passed. Formatting, all-target
+Clippy with warnings denied, dependency-layer checks and the 24 wasm checks passed.
+The initial Wacom acceptance above describes the previous repair build; this
+compatibility follow-up still requires a new physical-tablet check after installation.
+
 Official main was checked at `84aa8df05ab26b41283e1192791764d545cf34a2`.
 Several open proposals overlap this work:
 

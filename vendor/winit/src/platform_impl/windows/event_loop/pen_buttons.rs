@@ -16,6 +16,45 @@ pub(crate) struct Transitions {
     pub tip: Option<TipPhase>,
 }
 
+impl Transitions {
+    // Touch End clears egui's pointer; restore hover after that event. Started
+    // and Moved already position it, so they must not also emit CursorMoved.
+    pub fn cursor_before(&self) -> bool {
+        self.tip.is_none() || self.tip == Some(TipPhase::Cancelled)
+    }
+
+    pub fn cursor_after(&self) -> bool {
+        self.tip == Some(TipPhase::Ended)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DeviceMapping {
+    pub device_width: f64,
+    pub device_height: f64,
+    pub display_left: f64,
+    pub display_top: f64,
+    pub display_width: f64,
+    pub display_height: f64,
+}
+
+pub(crate) fn pointer_position(
+    mapping: Option<DeviceMapping>,
+    himetric: (f64, f64),
+    pixels: (f64, f64),
+) -> (f64, f64) {
+    if let Some(m) = mapping {
+        if m.device_width > 0.0 && m.device_height > 0.0 {
+            let x = m.display_left + himetric.0 * m.display_width / m.device_width;
+            let y = m.display_top + himetric.1 * m.display_height / m.device_height;
+            if x.is_finite() && y.is_finite() {
+                return (x, y);
+            }
+        }
+    }
+    pixels
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PenButtons {
     secondary: bool,
@@ -65,6 +104,55 @@ impl PenButtons {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hover_is_restored_after_lift_without_duplicate_stroke_positions() {
+        for tip in [None, Some(TipPhase::Cancelled)] {
+            let events = Transitions { secondary: None, tip };
+            assert!(events.cursor_before());
+            assert!(!events.cursor_after());
+        }
+        let end = Transitions { secondary: None, tip: Some(TipPhase::Ended) };
+        assert!(!end.cursor_before());
+        assert!(end.cursor_after());
+        for phase in [TipPhase::Started, TipPhase::Moved] {
+            let events = Transitions { secondary: None, tip: Some(phase) };
+            assert!(!events.cursor_before() && !events.cursor_after());
+        }
+    }
+
+    #[test]
+    fn coordinate_mapping_preserves_monitor_offset_and_fractional_position() {
+        let m = DeviceMapping {
+            device_width: 1000.0,
+            device_height: 500.0,
+            display_left: -1920.0,
+            display_top: 120.0,
+            display_width: 1920.0,
+            display_height: 1080.0,
+        };
+        assert_eq!(pointer_position(Some(m), (250.0, 125.0), (0.0, 0.0)), (-1440.0, 390.0));
+        let p = pointer_position(Some(m), (0.5, 0.5), (0.0, 0.0));
+        assert!((p.0 + 1919.04).abs() < 1e-6);
+        assert!((p.1 - 121.08).abs() < 1e-6);
+    }
+
+    #[test]
+    fn missing_invalid_or_nonfinite_device_rectangles_use_pixel_position() {
+        let pixels = (-480.0, 240.0);
+        assert_eq!(pointer_position(None, (50.0, 80.0), pixels), pixels);
+        for width in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let m = DeviceMapping {
+                device_width: width,
+                device_height: 100.0,
+                display_left: 0.0,
+                display_top: 0.0,
+                display_width: f64::INFINITY,
+                display_height: 100.0,
+            };
+            assert_eq!(pointer_position(Some(m), (50.0, 80.0), pixels), pixels);
+        }
+    }
 
     #[test]
     fn hovering_barrel_emits_exactly_one_press_and_release() {
