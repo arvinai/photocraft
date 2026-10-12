@@ -26,6 +26,7 @@ pub(crate) mod blend_preview;
 mod brand;
 pub mod brush_panel;
 pub mod brush_picker;
+mod brush_picker_press;
 pub mod brush_preview;
 pub mod brush_resize;
 pub mod brush_sections;

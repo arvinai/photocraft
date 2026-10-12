@@ -102,10 +102,10 @@ pub fn canvas_buttons(app: &mut PhotocraftApp, response: &Response, tool: Tool) 
     let right_stroke = erase && app.drag.is_some();
     let right_start = erase && response.drag_started_by(PointerButton::Secondary);
     let right_click = response.secondary_clicked();
-    if right_click
-        && !erase
-        && !layer_menu
-        && has_brush_picker(tool)
+    // Pen barrel buttons may stay held while hovering or moving. Open on press,
+    // rather than requiring a release close enough to count as an egui click.
+    let resize_gesture = crate::brush_resize::applies(tool) && crate::brush_resize::is_right_gesture(crate::workspace_ui::sticky_mods(app, mods));
+    if crate::brush_picker_press::opens(response, erase || layer_menu || resize_gesture || resizing || !has_brush_picker(tool))
         && let Some(p) = response.interact_pointer_pos()
     {
         let frame = response.ctx.cumulative_frame_nr();
@@ -269,6 +269,35 @@ mod tests {
 
     fn strokes(h: &Harness<'static, PhotocraftApp>) -> Vec<serde_json::Value> {
         h.state().session.journal.iter().filter(|(id, _)| id == "paint.stroke").map(|(_, p)| p.clone()).collect()
+    }
+
+    #[test]
+    fn alt_barrel_press_leaves_brush_resize_priority() {
+        let mut h = harness(None);
+        let p = h.state().last_canvas_rect.center();
+        h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+        h.event(egui::Event::PointerMoved(p));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: p, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::ALT });
+        h.run_steps(2);
+        assert!(h.state().ui.brush_picker.is_none());
+        assert!(strokes(&h).is_empty());
+    }
+
+    #[test]
+    fn held_barrel_press_opens_picker_without_painting() {
+        let mut h = harness(None);
+        let p = h.state().last_canvas_rect.center();
+        h.event(egui::Event::PointerMoved(p));
+        h.run_steps(1);
+        press(&mut h, p, PointerButton::Secondary, true);
+        assert!(h.state().ui.brush_picker.is_some(), "opens before the barrel is released");
+        assert!(strokes(&h).is_empty());
+        h.event(egui::Event::PointerMoved(p + vec2(-90.0, -50.0)));
+        h.run_steps(2);
+        assert!(h.state().ui.brush_picker.is_some());
+        press(&mut h, p + vec2(-90.0, -50.0), PointerButton::Secondary, false);
+        assert!(strokes(&h).is_empty(), "a barrel hover/drag never paints");
     }
 
     #[test]
